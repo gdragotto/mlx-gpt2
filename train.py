@@ -71,60 +71,37 @@ val_data = data[split:]
 console.print(f"[green]✓[/green] Training samples: [bold]{len(train_data)}[/bold]")
 console.print(f"[green]✓[/green] Validation samples: [bold]{len(val_data)}[/bold]")
 
-### Data Prep
-console.print("[yellow]Preparing training data...[/yellow]")
-
-# Add progress for creating training arrays
-with Progress(console=console) as progress:
-    # Calculate total number of sequences
-    train_sequences = (len(train_data) - ctx_len) // ctx_len
-    val_sequences = (len(val_data) - ctx_len) // ctx_len
-    
-    train_task = progress.add_task("[cyan]Creating training sequences", total=train_sequences)
-    val_task = progress.add_task("[cyan]Creating validation sequences", total=val_sequences)
-    
-    # Create training sequences with progress
-    X_train_list = []
-    y_train_list = []
-    for i in range(0, len(train_data) - ctx_len, ctx_len):
-        X_train_list.append(train_data[i:i+ctx_len])
-        y_train_list.append(train_data[i+1:i+ctx_len+1])
-        if len(X_train_list) % 100 == 0:  # Update every 100 sequences
-            progress.update(train_task, completed=len(X_train_list))
-    
-    # Create validation sequences with progress
-    X_val_list = []
-    y_val_list = []
-    for i in range(0, len(val_data) - ctx_len, ctx_len):
-        X_val_list.append(val_data[i:i+ctx_len])
-        y_val_list.append(val_data[i+1:i+ctx_len+1])
-        if len(X_val_list) % 100 == 0:  # Update every 100 sequences
-            progress.update(val_task, completed=len(X_val_list))
-    
-    progress.update(train_task, completed=train_sequences)
-    progress.update(val_task, completed=val_sequences)
-
-# Convert to MLX arrays
-console.print("[yellow]Converting to MLX arrays...[/yellow]")
-X_train = mx.array(X_train_list)
-y_train = mx.array(y_train_list)
-X_val = mx.array(X_val_list)
-y_val = mx.array(y_val_list)
-
-console.print(f"[green]✓[/green] Training batches: [bold]{X_train.shape[0]}[/bold]")
-console.print(f"[green]✓[/green] Validation batches: [bold]{X_val.shape[0]}[/bold]")
-
-def get_batches(X, y, b_size, shuffle=True):
-    if shuffle:
-        ix = np.arange(X.shape[0])
-        np.random.shuffle(ix)
-        ix = mx.array(ix)
-        X = X[ix]
-        y = y[ix]
-    for i in range(0, X.shape[0], b_size):
-        input = X[i:i+b_size]
-        label = y[i:i+b_size]
-        yield input, label
+### Streaming Data Generator
+class StreamingDataGenerator:
+    def __init__(self, data, ctx_len, batch_size, shuffle=True):
+        self.data = data
+        self.ctx_len = ctx_len
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.total_sequences = (len(data) - ctx_len) // ctx_len
+        
+    def __iter__(self):
+        # Create sequence indices
+        indices = list(range(self.total_sequences))
+        if self.shuffle:
+            np.random.shuffle(indices)
+        
+        # Yield batches
+        for i in range(0, len(indices), self.batch_size):
+            batch_indices = indices[i:i+self.batch_size]
+            batch_x = []
+            batch_y = []
+            
+            for idx in batch_indices:
+                start_pos = idx * self.ctx_len
+                end_pos = start_pos + self.ctx_len
+                batch_x.append(self.data[start_pos:end_pos])
+                batch_y.append(self.data[start_pos+1:end_pos+1])
+            
+            # Convert to MLX arrays
+            x = mx.array(batch_x)
+            y = mx.array(batch_y)
+            yield x, y
 
 ### Training
 def loss_fn(model, x, y):
@@ -146,6 +123,17 @@ optimizer = optim.AdamW(learning_rate=lr)
 total_params = sum([p.size for n, p in utils.tree_flatten(model.parameters())])
 console.print(f"[green]✓[/green] Model parameters: [bold]{total_params:,}[/bold]")
 
+# Create data generators
+train_generator = StreamingDataGenerator(train_data, ctx_len, batch_size, shuffle=True)
+val_generator = StreamingDataGenerator(val_data, ctx_len, batch_size, shuffle=False)
+
+# Calculate total batches
+train_batches = (len(train_data) - ctx_len) // ctx_len // batch_size
+val_batches = (len(val_data) - ctx_len) // ctx_len // batch_size
+
+console.print(f"[cyan]Training batches per epoch:[/cyan] {train_batches}")
+console.print(f"[cyan]Validation batches per epoch:[/cyan] {val_batches}")
+
 console.print("\n[bold green]Starting training...[/bold green]\n")
 
 # Training loop with rich progress tracking
@@ -166,11 +154,10 @@ with Progress(
         running_loss = 0
         batch_cnt = 0
         
-        # Calculate number of batches for progress bar
-        num_batches = (X_train.shape[0] + batch_size - 1) // batch_size
-        batch_task = progress.add_task(f"[yellow]Epoch {epoch+1}/{num_epochs} - Training", total=num_batches)
+        # Training phase
+        batch_task = progress.add_task(f"[yellow]Epoch {epoch+1}/{num_epochs} - Training", total=train_batches)
         
-        for input, label in get_batches(X_train, y_train, batch_size):
+        for input, label in train_generator:
             batch_cnt += 1
             loss, grads = loss_and_grad(model, input, label)
             optimizer.update(model, grads)
@@ -188,10 +175,9 @@ with Progress(
         running_loss = 0
         batch_cnt = 0
         
-        num_val_batches = (X_val.shape[0] + batch_size - 1) // batch_size
-        val_task = progress.add_task(f"[green]Epoch {epoch+1}/{num_epochs} - Validation", total=num_val_batches)
+        val_task = progress.add_task(f"[green]Epoch {epoch+1}/{num_epochs} - Validation", total=val_batches)
         
-        for input, label in get_batches(X_val, y_val, batch_size):
+        for input, label in val_generator:
             batch_cnt += 1
             loss = loss_fn(model, input, label)
             running_loss += loss.item()
@@ -256,4 +242,4 @@ final_table.add_row("Best Training Loss", f"{min(train_losses):.4f}")
 final_table.add_row("Best Validation Loss", f"{min(val_losses):.4f}")
 final_table.add_row("Model Parameters", f"{total_params:,}")
 
-console.print(final_table)
+console.print(final_table) 
