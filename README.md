@@ -1,6 +1,6 @@
-# GPT-2 From Scratch in MLX
-Train.py is ~200 lines of python code that define and train GPT-2 from scratch using mlx and numpy as the only dependencies. This readme will detail writing train.py from scratch. The model is trained on ~1 million characters of Shakespeare contained in input.txt, and it can be trained in around 10 minutes on a macbook to produce coherent Shakespeare-like text.\
-This tutorial follows [Karpathy's GPT from scratch](https://www.youtube.com/watch?v=kCc8FmEb1nY) but in MLX.
+# GPT-2 MLX with OpenAI GPT-2 Output Dataset
+This is a fork of [MLX GPT2 from pranavjad](https://github.com/pranavjad/mlx-gpt2) to train a GPT-2 model with the [OpenAI GPT-2 Output Dataset](https://github.com/openai/gpt-2-output-dataset).
+To download the data used to train (small-117M.test.jsonl and small-117M.train.jsonl), please follow [the instructions here](https://github.com/openai/gpt-2-output-dataset).
 
 ## Table of Contents
   - [Preparing the data](#preparing-thedata)
